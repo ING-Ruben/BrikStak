@@ -8,10 +8,19 @@ const logger = pino({ name: 'openai-service' });
 export const DEFAULT_SYSTEM_INSTRUCTIONS = `Tu es un assistant WhatsApp concis et utile. Réponds en français clair, avec des messages courts adaptés à WhatsApp. Si la question concerne des sujets sensibles, propose des ressources neutres. S'il y a ambiguïté, pose une question ciblée avant d'agir.`;
 
 export class OpenAIService {
-  private client: OpenAI;
-  private model: string;
+  private client: OpenAI | null = null;
+  private model: string = '';
+  private initialized = false;
 
   constructor() {
+    // Don't initialize immediately - use lazy initialization
+  }
+
+  private initialize(): void {
+    if (this.initialized) {
+      return;
+    }
+
     const apiKey = process.env['OPENAI_API_KEY'];
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY environment variable is required');
@@ -22,6 +31,7 @@ export class OpenAIService {
     });
 
     this.model = process.env['OPENAI_MODEL'] || 'gpt-4o-mini';
+    this.initialized = true;
     logger.info({ model: this.model }, 'OpenAI service initialized');
   }
 
@@ -54,6 +64,13 @@ export class OpenAIService {
     history: Message[] = []
   ): Promise<string> {
     try {
+      // Initialize the service if not already done
+      this.initialize();
+      
+      if (!this.client) {
+        throw new Error('OpenAI client not properly initialized');
+      }
+
       const input = this.buildInputFromHistory(userText, history);
       
       logger.info(
@@ -93,6 +110,27 @@ export class OpenAIService {
       );
       
       throw error;
+    }
+  }
+
+  /**
+   * Vérifie si le service peut être initialisé (pour les health checks)
+   */
+  checkConfiguration(): { isValid: boolean; error?: string } {
+    try {
+      const apiKey = process.env['OPENAI_API_KEY'];
+      if (!apiKey) {
+        return { isValid: false, error: 'OPENAI_API_KEY environment variable is missing' };
+      }
+      if (!apiKey.startsWith('sk-')) {
+        return { isValid: false, error: 'OPENAI_API_KEY does not appear to be valid (should start with sk-)' };
+      }
+      return { isValid: true };
+    } catch (error) {
+      return { 
+        isValid: false, 
+        error: error instanceof Error ? error.message : 'Unknown configuration error' 
+      };
     }
   }
 }
