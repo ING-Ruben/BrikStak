@@ -8,18 +8,6 @@ import { chunkText } from '../utils/chunkText';
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
 
-router.post(
-  '/whatsapp',
-  (req, _res, next) => {
-    logger.info({ method: req.method, path: req.originalUrl }, 'Webhook hit (pre-validation)');
-    next();
-  },
-  twilioValidation,
-  async (req, res) => {
-    // ... ton handler inchangé ...
-  }
-);
-
 // Middleware de validation Twilio (désactivé en mode test)
 const isProd = process.env.NODE_ENV === 'production';
 
