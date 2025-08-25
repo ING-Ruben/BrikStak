@@ -9,14 +9,20 @@ const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
 
 // Middleware de validation Twilio (désactivé en mode test)
-const isProd = process.env.NODE_ENV === 'production';
+const { NODE_ENV, PUBLIC_HOSTNAME } = process.env as {
+  NODE_ENV?: string;
+  PUBLIC_HOSTNAME?: string;
+};
+const isProd = NODE_ENV === 'production';
 
 const twilioValidation = isProd
   ? twilio.webhook({
       validate: true,
       protocol: 'https',
-      host: process.env.PUBLIC_HOSTNAME, // ex: "ton-app.up.railway.app"
-      // authToken: process.env.TWILIO_AUTH_TOKEN // optionnel si déjà dans l'env
+      // n'inclus 'host' que s'il existe :
+      ...(PUBLIC_HOSTNAME ? { host: PUBLIC_HOSTNAME } : {}),
+      // si tu veux, pareil pour le token :
+      // ...(process.env.TWILIO_AUTH_TOKEN ? { authToken: process.env.TWILIO_AUTH_TOKEN } : {}),
     })
   : twilio.webhook({ validate: false });
 
