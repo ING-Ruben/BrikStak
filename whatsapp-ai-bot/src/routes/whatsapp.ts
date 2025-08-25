@@ -8,10 +8,19 @@ import { chunkText } from '../utils/chunkText';
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
 
-// Middleware de validation Twilio (désactivé en mode test)
+// Configuration de validation Twilio avec gestion d'erreurs robuste
+const shouldValidateWebhook = process.env['NODE_ENV'] !== 'test' && !!process.env['TWILIO_AUTH_TOKEN'];
+
 const twilioValidation = twilio.webhook({ 
-  validate: process.env['NODE_ENV'] !== 'test' 
+  validate: shouldValidateWebhook
 });
+
+// Log de configuration au démarrage
+logger.info({
+  webhookValidation: shouldValidateWebhook,
+  hasAuthToken: !!process.env['TWILIO_AUTH_TOKEN'],
+  nodeEnv: process.env['NODE_ENV']
+}, 'Twilio webhook validation configured');
 
 /**
  * Gère les commandes spéciales (/help, /reset)

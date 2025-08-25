@@ -40,6 +40,24 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Route de diagnostic (pour debug Railway)
+app.get('/debug', (_req, res) => {
+  res.json({
+    status: 'debug',
+    timestamp: new Date().toISOString(),
+    environment: {
+      NODE_ENV: process.env['NODE_ENV'],
+      PORT: process.env['PORT'],
+      hasOpenAIKey: !!process.env['OPENAI_API_KEY'],
+      hasTwilioToken: !!process.env['TWILIO_AUTH_TOKEN'],
+      openaiModel: process.env['OPENAI_MODEL'] || 'gpt-4o-mini',
+      logLevel: process.env['LOG_LEVEL'] || 'info'
+    },
+    webhookUrl: '/whatsapp',
+    endpoints: ['/health', '/debug', '/whatsapp']
+  });
+});
+
 // Route principale WhatsApp
 app.use('/', whatsappRouter);
 
