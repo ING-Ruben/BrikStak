@@ -154,15 +154,27 @@ npm run test:watch # Tests en mode watch
 
 Dans le dashboard Railway, allez dans l'onglet **Variables** et ajoutez :
 
+#### Variables obligatoires :
 ```
 OPENAI_API_KEY=sk-votre-clé-openai
-OPENAI_MODEL=gpt-4o-mini
 TWILIO_AUTH_TOKEN=votre-token-twilio
 NODE_ENV=production
+```
+
+#### Variables optionnelles :
+```
+OPENAI_MODEL=gpt-4o-mini
 LOG_LEVEL=info
+
+# Supabase (optionnel - pour sauvegarde des commandes)
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_TABLE_NAME=commandes
 ```
 
 **⚠️ Important :** Railway définit automatiquement la variable `PORT`, ne la redéfinissez pas.
+
+**📖 Guide détaillé :** Voir [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) pour plus d'informations.
 
 ### 3. Déployer
 

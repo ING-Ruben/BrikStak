@@ -23,17 +23,22 @@ export class SupabaseService {
     const supabaseKey = process.env['SUPABASE_ANON_KEY'];
     this.tableName = process.env['SUPABASE_TABLE_NAME'] || 'commandes';
     
-    // En mode test, Supabase est optionnel
+    // Supabase est optionnel en mode test et si les variables ne sont pas configurées
     const isTestMode = process.env['NODE_ENV'] === 'test';
+    const isProductionMode = process.env['NODE_ENV'] === 'production';
     
     if (!supabaseUrl || !supabaseKey) {
+      this.enabled = false;
+      
       if (isTestMode) {
-        this.enabled = false;
         logger.info('Supabase service disabled in test mode (missing env vars)');
-        return;
+      } else if (isProductionMode) {
+        logger.warn('Supabase service disabled in production (missing SUPABASE_URL or SUPABASE_ANON_KEY)');
+        logger.warn('Orders will not be saved to database. Please configure Supabase environment variables.');
       } else {
-        throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY environment variables are required');
+        logger.info('Supabase service disabled (missing env vars)');
       }
+      return;
     }
 
     this.enabled = true;

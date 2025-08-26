@@ -191,8 +191,14 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
               'Failed to save order to Supabase'
             );
             
-            // Informer l'utilisateur en cas d'échec
-            aiResponse += `\n\n⚠️ Note : Il y a eu un problème technique lors de l'enregistrement. Ton responsable chantier sera informé directement.`;
+            // Informer l'utilisateur en cas d'échec (mais rester discret)
+            if (saveResult.error?.includes('not available')) {
+              // Service Supabase non configuré - ne pas alarmer l'utilisateur
+              logger.info({ phoneNumber }, 'Order not saved - Supabase not configured');
+            } else {
+              // Vraie erreur technique
+              aiResponse += `\n\n⚠️ Note : Il y a eu un problème technique lors de l'enregistrement. Ton responsable chantier sera informé directement.`;
+            }
           }
         } else {
           logger.warn(
