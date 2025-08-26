@@ -34,6 +34,13 @@
 - ✅ /reset - Efface l'historique
 - ✅ Messages normaux - Traités par OpenAI
 
+### 🗄️ Intégration Supabase
+- ✅ Service Supabase avec gestion d'erreurs
+- ✅ Sauvegarde automatique des commandes validées
+- ✅ Détection automatique de confirmation d'ouvrier
+- ✅ Parsing intelligent des récapitulatifs de commande
+- ✅ Feedback utilisateur avec référence de commande
+
 ### 🛡️ Robustesse
 - ✅ Découpage automatique des messages > 3500 caractères
 - ✅ Gestion d'erreurs complète
@@ -73,10 +80,30 @@ npm test
 - `OPENAI_MODEL` - Modèle OpenAI (défaut: gpt-4o-mini)
 - `NODE_ENV` - Environment (production pour Railway)
 - `LOG_LEVEL` - Niveau de log (défaut: info)
+- `SUPABASE_URL` - URL de votre projet Supabase
+- `SUPABASE_ANON_KEY` - Clé anonyme Supabase
+- `SUPABASE_TABLE_NAME` - Nom de la table commandes (défaut: commandes)
 
 ### Configuration Twilio Webhook :
 URL: `https://votre-app.up.railway.app/whatsapp`
 Méthode: POST
+
+### Configuration Supabase :
+1. Créer un projet Supabase
+2. Créer une table `commandes` avec la structure suivante :
+```sql
+CREATE TABLE commandes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  chantier TEXT NOT NULL,
+  materiau TEXT NOT NULL,
+  quantite TEXT NOT NULL,
+  unite TEXT NOT NULL,
+  date_heure TEXT NOT NULL,
+  phone_number TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+3. Configurer les variables d'environnement Supabase
 
 ## 📊 Métriques du Projet
 

@@ -4,6 +4,8 @@ import pino from 'pino';
 import { openAIService, DEFAULT_SYSTEM_INSTRUCTIONS } from '../services/openai';
 import { sessionManager } from '../services/session';
 import { chunkText } from '../utils/chunkText';
+import { supabaseService } from '../services/supabase';
+import { parseOrderFromText, isOrderConfirmation, containsOrderSummary, isOrderReady } from '../utils/orderParser';
 
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
@@ -137,6 +139,70 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
       );
       
       aiResponse = '❌ Désolé, je rencontre des difficultés techniques. Veuillez réessayer dans quelques instants.';
+    }
+
+    // Vérification si l'utilisateur confirme une commande
+    const isConfirmation = isOrderConfirmation(messageBody);
+    
+    if (isConfirmation) {
+      // Récupérer le dernier message de l'assistant pour chercher le récapitulatif
+      const lastAssistantMessage = history.length > 0 ? 
+        history[history.length - 1] : null;
+      
+      if (lastAssistantMessage && 
+          lastAssistantMessage.role === 'assistant' && 
+          containsOrderSummary(lastAssistantMessage.content)) {
+        
+        // Extraire les données de commande du récapitulatif
+        const orderData = parseOrderFromText(lastAssistantMessage.content, phoneNumber);
+        
+        if (orderData) {
+          logger.info(
+            { 
+              phoneNumber,
+              chantier: orderData.chantier,
+              materiau: orderData.materiau 
+            }, 
+            'Attempting to save confirmed order to Supabase'
+          );
+          
+          // Sauvegarder dans Supabase
+          const saveResult = await supabaseService.saveOrder(orderData);
+          
+          if (saveResult.success) {
+            logger.info(
+              { 
+                phoneNumber,
+                orderId: saveResult.id 
+              }, 
+              'Order successfully saved to Supabase'
+            );
+            
+            // Modifier la réponse de l'IA pour confirmer la sauvegarde
+            if (isOrderReady(aiResponse)) {
+              aiResponse = `✅ Commande prête à être transmise et sauvegardée avec succès !\n\n📝 Référence : ${saveResult.id || 'N/A'}\n\nTa commande a été enregistrée et sera traitée dans les plus brefs délais.`;
+            }
+          } else {
+            logger.error(
+              { 
+                phoneNumber,
+                error: saveResult.error 
+              }, 
+              'Failed to save order to Supabase'
+            );
+            
+            // Informer l'utilisateur en cas d'échec
+            aiResponse += `\n\n⚠️ Note : Il y a eu un problème technique lors de l'enregistrement. Ton responsable chantier sera informé directement.`;
+          }
+        } else {
+          logger.warn(
+            { 
+              phoneNumber 
+            }, 
+            'Could not parse order data from summary'
+          );
+        }
+      }
     }
 
     // Sauvegarde des messages dans l'historique

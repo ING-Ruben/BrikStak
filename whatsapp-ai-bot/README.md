@@ -8,6 +8,8 @@ Un bot WhatsApp intelligent alimenté par OpenAI et intégré via Twilio. Le bot
 - 🤖 **IA conversationnelle** utilisant l'API OpenAI Responses
 - 💭 **Mémoire de conversation** (15 messages max, TTL 2h)
 - 📱 **Commandes spéciales** (`/help`, `/reset`)
+- 🗄️ **Sauvegarde automatique** des commandes validées dans Supabase
+- 🔍 **Détection intelligente** de confirmation de commandes
 - 🔄 **Gestion des messages longs** (découpage automatique)
 - 🛡️ **Robustesse** avec gestion d'erreurs et fallbacks
 - 📊 **Logs structurés** avec Pino
@@ -18,6 +20,7 @@ Un bot WhatsApp intelligent alimenté par OpenAI et intégré via Twilio. Le bot
 - **Node.js 20+**
 - **Compte OpenAI** avec accès à l'API Responses
 - **Compte Twilio** avec WhatsApp Sandbox activé
+- **Compte Supabase** pour la sauvegarde des commandes
 - **ngrok** (pour développement local) ou **Railway** (pour déploiement)
 
 ## 🛠️ Installation
@@ -48,6 +51,11 @@ OPENAI_MODEL=gpt-4o-mini
 # Twilio Configuration
 TWILIO_AUTH_TOKEN=votre-token-twilio-ici
 
+# Supabase Configuration
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_TABLE_NAME=commandes
+
 # Server Configuration
 PORT=3000
 NODE_ENV=development
@@ -62,6 +70,12 @@ LOG_LEVEL=info
 1. Allez sur [platform.openai.com](https://platform.openai.com)
 2. Créez une clé API dans la section "API Keys"
 3. Assurez-vous d'avoir accès à l'API Responses
+
+#### Supabase
+1. Créez un compte sur [supabase.com](https://supabase.com)
+2. Créez un nouveau projet
+3. Dans Settings > API, copiez votre URL et clé anonyme
+4. Suivez le guide [SUPABASE_SETUP.md](SUPABASE_SETUP.md) pour configurer la base de données
 
 #### Twilio
 1. Créez un compte sur [twilio.com](https://twilio.com)
