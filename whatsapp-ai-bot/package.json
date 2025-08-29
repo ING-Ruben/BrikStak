@@ -20,7 +20,8 @@
     "body-parser": "^1.20.2",
     "twilio": "^4.20.0",
     "openai": "^4.28.0",
-    "pino": "^8.17.2"
+    "pino": "^8.17.2",
+    "@supabase/supabase-js": "^2.39.3"
   },
   "devDependencies": {
     "typescript": "^5.3.3",
