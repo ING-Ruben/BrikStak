@@ -28,6 +28,8 @@ Un bot WhatsApp intelligent alimenté par OpenAI et intégré via Twilio. Le bot
 git clone <votre-repo>
 cd whatsapp-ai-bot
 npm install
+# Pour un environnement de production, utilisez :
+# npm install --omit=dev
 ```
 
 ### 2. Configuration des variables d'environnement
