@@ -4,6 +4,8 @@ import pino from 'pino';
 import { openAIService, DEFAULT_SYSTEM_INSTRUCTIONS } from '../services/openai';
 import { sessionManager } from '../services/session';
 import { chunkText } from '../utils/chunkText';
+import { supabaseService } from '../services/supabase';
+import { parseOrderFromResponse, convertToOrderInfo, validateOrderFormats } from '../utils/orderParser';
 
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
@@ -142,6 +144,47 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
     // Sauvegarde des messages dans l'historique
     sessionManager.addMessage(phoneNumber, { role: 'user', content: messageBody });
     sessionManager.addMessage(phoneNumber, { role: 'assistant', content: aiResponse });
+
+    // Traitement et stockage de la commande si elle est complète et confirmée
+    try {
+      const parsedOrder = parseOrderFromResponse(aiResponse);
+      
+      if (parsedOrder.is_complete && parsedOrder.is_confirmed) {
+        const orderInfo = convertToOrderInfo(parsedOrder, phoneNumber);
+        
+        if (orderInfo && validateOrderFormats(orderInfo)) {
+          const stored = await supabaseService.storeOrder(orderInfo);
+          
+          if (stored) {
+            logger.info({
+              phoneNumber,
+              chantier: orderInfo.chantier,
+              materiau: orderInfo.materiau
+            }, 'Order stored successfully in Supabase');
+          } else {
+            logger.warn({
+              phoneNumber,
+              orderInfo
+            }, 'Failed to store order in Supabase');
+          }
+        } else {
+          logger.warn({
+            phoneNumber,
+            parsedOrder
+          }, 'Order format validation failed');
+        }
+      } else if (parsedOrder.is_complete && !parsedOrder.is_confirmed) {
+        logger.info({
+          phoneNumber,
+          chantier: parsedOrder.chantier
+        }, 'Order is complete but not yet confirmed');
+      }
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        phoneNumber
+      }, 'Error processing order for storage');
+    }
 
     // Découpage du message si nécessaire
     const responseChunks = chunkText(aiResponse);

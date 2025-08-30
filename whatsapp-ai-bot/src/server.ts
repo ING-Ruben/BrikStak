@@ -2,6 +2,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import pino from 'pino';
 import whatsappRouter from './routes/whatsapp';
+import ordersRouter from './routes/orders';
 
 // Configuration du logger
 const logLevel = (process.env['LOG_LEVEL'] || 'info') as pino.Level;
@@ -40,8 +41,9 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// Route principale WhatsApp
+// Routes
 app.use('/', whatsappRouter);
+app.use('/api', ordersRouter);
 
 // Gestion des erreurs globales
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
