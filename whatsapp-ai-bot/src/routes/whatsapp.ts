@@ -2,10 +2,12 @@ import express from 'express';
 import twilio from 'twilio';
 import pino from 'pino';
 import { openAIService, DEFAULT_SYSTEM_INSTRUCTIONS } from '../services/openai';
+import { conversationalAgent } from '../services/conversationalAgent';
+import { extractionAgent } from '../services/extractionAgent';
 import { sessionManager } from '../services/session';
 import { chunkText } from '../utils/chunkText';
 import { supabaseService } from '../services/supabase';
-import { parseOrderFromResponse, convertToOrderInfo, validateOrderFormats } from '../utils/orderParser';
+import { parseOrderFromResponse } from '../utils/orderParser';
 
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
@@ -121,102 +123,211 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
       'Retrieved conversation history'
     );
 
-    // Appel à OpenAI
-    let aiResponse: string;
+    // NOUVELLE ARCHITECTURE : Orchestration parallèle des 2 agents spécialisés
+    const dualAgentStartTime = Date.now();
+    let conversationResult: any;
+    let extractionResult: any;
+    let fallbackUsed = false;
+    let shouldStore = false;
+
     try {
-      aiResponse = await openAIService.askOpenAI(
-        messageBody,
-        DEFAULT_SYSTEM_INSTRUCTIONS,
-        history
-      );
-    } catch (error) {
-      logger.error(
-        { 
-          error: error instanceof Error ? error.message : 'Unknown error',
-          phoneNumber 
-        }, 
-        'OpenAI API call failed'
-      );
+      logger.info({ phoneNumber }, 'Starting dual agent processing');
+
+      // Lancement parallèle des 2 agents avec Promise.all() et timeout
+      const AGENT_TIMEOUT = 30000; // 30 secondes timeout
       
-      aiResponse = '❌ Désolé, je rencontre des difficultés techniques. Veuillez réessayer dans quelques instants.';
+      const conversationPromise = Promise.race([
+        conversationalAgent.respond(messageBody, history),
+        new Promise<any>((_, reject) => 
+          setTimeout(() => reject(new Error('Conversational agent timeout')), AGENT_TIMEOUT)
+        )
+      ]);
+
+      const extractionPromise = Promise.race([
+        extractionAgent.analyze(messageBody, history),
+        new Promise<any>((_, reject) => 
+          setTimeout(() => reject(new Error('Extraction agent timeout')), AGENT_TIMEOUT)
+        )
+      ]);
+
+      const [conversationResponse, extractionResponse] = await Promise.all([
+        conversationPromise,
+        extractionPromise
+      ]);
+
+      conversationResult = conversationResponse;
+      extractionResult = extractionResponse;
+
+      // const dualAgentProcessingTime = Date.now() - dualAgentStartTime;
+
+      // Logs détaillés pour debugging
+      logger.info({
+        phoneNumber,
+        processing: {
+          conversationalAgent: {
+            response: conversationResult.message.substring(0, 100),
+            confidence: conversationResult.confidence,
+            processingTime: conversationResult.processingTime
+          },
+          extractionAgent: {
+            data: extractionResult.data,
+            completude: extractionResult.data.completude,
+            errors: extractionResult.errors,
+            processingTime: extractionResult.processingTime
+          }
+        },
+        decision: {
+          shouldStore: extractionResult.data.completude >= 0.8 && extractionResult.data.confirmation,
+          fallbackUsed: false
+        }
+      }, 'Dual agent processing completed');
+
+      // Déterminer si on doit stocker la commande
+      shouldStore = extractionResult.data.completude >= 0.8 && extractionResult.data.confirmation && extractionResult.isValid;
+
+    } catch (error) {
+      // Fallback vers l'ancien système en cas d'échec des agents
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        phoneNumber
+      }, 'Dual agent processing failed, falling back to legacy system');
+
+      fallbackUsed = true;
+
+      try {
+        const legacyResponse = await openAIService.askOpenAI(
+          messageBody,
+          DEFAULT_SYSTEM_INSTRUCTIONS,
+          history
+        );
+
+        conversationResult = {
+          message: legacyResponse,
+          confidence: 0.5,
+          processingTime: Date.now() - dualAgentStartTime,
+          requiresFollowUp: true
+        };
+
+        // Parsing legacy pour l'extraction
+        const parsedOrder = parseOrderFromResponse(legacyResponse, messageBody, history);
+        extractionResult = {
+          data: {
+            chantier: parsedOrder.chantier || null,
+            materiaux: parsedOrder.materiau ? [{
+              nom: parsedOrder.materiau,
+              quantite: parsedOrder.quantite || '',
+              unite: parsedOrder.unite || ''
+            }] : [],
+            livraison: {
+              date: parsedOrder.date_besoin || null,
+              heure: parsedOrder.heure_besoin || null
+            },
+            completude: parsedOrder.is_complete ? 0.9 : 0.5,
+            confirmation: parsedOrder.is_confirmed || false
+          },
+          processingTime: Date.now() - dualAgentStartTime,
+          errors: [],
+          isValid: true
+        };
+
+        shouldStore = Boolean(parsedOrder.is_complete && parsedOrder.is_confirmed);
+
+        logger.info({
+          phoneNumber,
+          fallbackProcessingTime: Date.now() - dualAgentStartTime,
+          legacyParsedOrder: parsedOrder
+        }, 'Legacy fallback processing completed');
+
+      } catch (fallbackError) {
+        logger.error({
+          error: fallbackError instanceof Error ? fallbackError.message : 'Unknown error',
+          phoneNumber
+        }, 'Legacy fallback also failed');
+
+        conversationResult = {
+          message: '❌ Désolé, je rencontre des difficultés techniques. Veuillez réessayer dans quelques instants.',
+          confidence: 0.1,
+          processingTime: Date.now() - dualAgentStartTime,
+          requiresFollowUp: false
+        };
+
+        extractionResult = {
+          data: {
+            chantier: null,
+            materiaux: [],
+            livraison: { date: null, heure: null },
+            completude: 0.0,
+            confirmation: false
+          },
+          processingTime: Date.now() - dualAgentStartTime,
+          errors: ['Système temporairement indisponible'],
+          isValid: false
+        };
+      }
     }
 
     // Sauvegarde des messages dans l'historique
     sessionManager.addMessage(phoneNumber, { role: 'user', content: messageBody });
-    sessionManager.addMessage(phoneNumber, { role: 'assistant', content: aiResponse });
+    sessionManager.addMessage(phoneNumber, { role: 'assistant', content: conversationResult.message });
 
-    // Traitement et stockage de la commande si elle est complète et confirmée
-    try {
-      const parsedOrder = parseOrderFromResponse(aiResponse, messageBody, history);
-      
-      // Log détaillé du parsing
-      logger.info({
-        phoneNumber,
-        userMessage: messageBody,
-        parsedOrder,
-        isComplete: parsedOrder.is_complete,
-        isConfirmed: parsedOrder.is_confirmed
-      }, 'Order parsing result');
-      
-      if (parsedOrder.is_complete && parsedOrder.is_confirmed) {
-        const orderInfo = convertToOrderInfo(parsedOrder, phoneNumber);
-        
-        logger.info({
-          phoneNumber,
-          orderInfo
-        }, 'Attempting to store order in Supabase');
-        
-        if (orderInfo && validateOrderFormats(orderInfo)) {
-          const stored = await supabaseService.storeOrder(orderInfo);
+    // Stockage de la commande si elle est prête
+    if (shouldStore && extractionResult.isValid) {
+      try {
+        const multiMaterialOrder = supabaseService.convertExtractionToMultiMaterialOrder(
+          extractionResult.data, 
+          phoneNumber
+        );
+
+        if (multiMaterialOrder) {
+          const stored = await supabaseService.storeMultiMaterialOrder(multiMaterialOrder);
           
           if (stored) {
             logger.info({
               phoneNumber,
-              chantier: orderInfo.chantier,
-              materiau: orderInfo.materiau
-            }, '✅ Order stored successfully in Supabase');
+              chantier: multiMaterialOrder.chantier,
+              materiaux: multiMaterialOrder.materiaux.length,
+              completude: multiMaterialOrder.completude
+            }, '✅ Multi-material order stored successfully in Supabase');
           } else {
             logger.error({
               phoneNumber,
-              orderInfo
-            }, '❌ Failed to store order in Supabase');
+              multiMaterialOrder
+            }, '❌ Failed to store multi-material order in Supabase');
           }
         } else {
           logger.warn({
             phoneNumber,
-            parsedOrder,
-            orderInfo
-          }, '❌ Order format validation failed');
+            extractionData: extractionResult.data
+          }, '❌ Could not convert extraction data to multi-material order');
         }
-      } else if (parsedOrder.is_complete && !parsedOrder.is_confirmed) {
-        logger.info({
+      } catch (storageError) {
+        logger.error({
+          error: storageError instanceof Error ? storageError.message : 'Unknown error',
           phoneNumber,
-          chantier: parsedOrder.chantier,
-          userMessage: messageBody
-        }, '⏳ Order is complete but not yet confirmed');
-      } else {
-        logger.info({
-          phoneNumber,
-          parsedOrder,
-          userMessage: messageBody
-        }, '📝 Order is incomplete or not ready');
+          extractionData: extractionResult.data
+        }, 'Error storing multi-material order');
       }
-    } catch (error) {
-      logger.error({
-        error: error instanceof Error ? error.message : 'Unknown error',
-        phoneNumber
-      }, 'Error processing order for storage');
+    } else if (extractionResult.data.completude >= 0.5) {
+      logger.info({
+        phoneNumber,
+        completude: extractionResult.data.completude,
+        confirmation: extractionResult.data.confirmation,
+        chantier: extractionResult.data.chantier
+      }, extractionResult.data.confirmation ? '⏳ Order complete but not confirmed' : '📝 Order incomplete or not ready');
     }
 
     // Découpage du message si nécessaire
-    const responseChunks = chunkText(aiResponse);
+    const responseChunks = chunkText(conversationResult.message);
     
     logger.info(
       { 
         phoneNumber,
-        responseLength: aiResponse.length,
+        responseLength: conversationResult.message.length,
         chunksCount: responseChunks.length,
-        activeSessionsCount: sessionManager.getActiveSessionsCount()
+        activeSessionsCount: sessionManager.getActiveSessionsCount(),
+        fallbackUsed,
+        agentConfidence: conversationResult.confidence,
+        extractionCompletude: extractionResult.data.completude
       }, 
       'Sending response to WhatsApp'
     );

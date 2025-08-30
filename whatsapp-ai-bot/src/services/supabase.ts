@@ -1,8 +1,29 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import pino from 'pino';
+import { ExtractionResult } from './extractionAgent';
 
 const logger = pino({ name: 'supabase-service' });
 
+// Interface pour un matériau individuel
+export interface MaterialOrderInfo {
+  nom: string;
+  quantite: string;
+  unite: string;
+}
+
+// Interface pour une commande multi-matériaux (nouvelle)
+export interface MultiMaterialOrderInfo {
+  phone_number: string;
+  chantier: string;
+  materiaux: MaterialOrderInfo[];
+  date_besoin: string;
+  heure_besoin: string;
+  statut: 'confirmee' | 'en_attente' | 'livree';
+  created_at?: string;
+  completude: number;
+}
+
+// Interface legacy pour compatibilité (ancienne)
 export interface OrderInfo {
   phone_number: string;
   chantier: string;
@@ -15,6 +36,7 @@ export interface OrderInfo {
   created_at?: string;
 }
 
+// Schema pour table legacy (un matériau par ligne)
 export interface TableSchema {
   chantier: string;
   materiau: string;
@@ -24,6 +46,18 @@ export interface TableSchema {
   heure_besoin: string;
   phone_number: string;
   statut: string;
+  created_at: string;
+}
+
+// Schema pour nouvelle table (multi-matériaux)
+export interface MultiMaterialTableSchema {
+  chantier: string;
+  materiaux_json: string; // JSON stringifié des matériaux
+  date_besoin: string;
+  heure_besoin: string;
+  phone_number: string;
+  statut: string;
+  completude: number;
   created_at: string;
 }
 
@@ -113,7 +147,134 @@ export class SupabaseService {
   }
 
   /**
-   * Stocke une commande dans la table appropriée
+   * Crée une table multi-matériaux pour un chantier si elle n'existe pas
+   */
+  private async createMultiMaterialTableIfNotExists(tableName: string): Promise<boolean> {
+    try {
+      const exists = await this.tableExists(tableName);
+      if (exists) {
+        logger.info({ tableName }, 'Multi-material table already exists');
+        return true;
+      }
+
+      // Créer la table multi-matériaux avec RPC
+      const { error } = await this.client.rpc('create_multi_material_orders_table', {
+        table_name: tableName
+      });
+
+      if (error) {
+        logger.error({ error: error.message, tableName }, 'Failed to create multi-material table');
+        return false;
+      }
+
+      logger.info({ tableName }, 'Multi-material table created successfully');
+      return true;
+    } catch (error) {
+      logger.error({ 
+        error: error instanceof Error ? error.message : 'Unknown error', 
+        tableName 
+      }, 'Error creating multi-material table');
+      return false;
+    }
+  }
+
+  /**
+   * Stocke une commande multi-matériaux (nouvelle méthode)
+   */
+  async storeMultiMaterialOrder(orderInfo: MultiMaterialOrderInfo): Promise<boolean> {
+    try {
+      const tableName = `multi_${this.normalizeTableName(orderInfo.chantier)}`;
+      
+      // Créer la table multi-matériaux si nécessaire
+      const tableCreated = await this.createMultiMaterialTableIfNotExists(tableName);
+      if (!tableCreated) {
+        throw new Error(`Failed to create or access multi-material table: ${tableName}`);
+      }
+
+      // Préparer les données pour l'insertion
+      const orderData = {
+        chantier: orderInfo.chantier,
+        materiaux_json: JSON.stringify(orderInfo.materiaux),
+        date_besoin: orderInfo.date_besoin,
+        heure_besoin: orderInfo.heure_besoin,
+        phone_number: orderInfo.phone_number,
+        statut: orderInfo.statut,
+        completude: orderInfo.completude,
+        created_at: new Date().toISOString()
+      };
+
+      // Insérer la commande
+      const { error } = await this.client
+        .from(tableName)
+        .insert([orderData])
+        .select();
+
+      if (error) {
+        logger.error({ error: error.message, tableName, orderData }, 'Failed to insert multi-material order');
+        return false;
+      }
+
+      logger.info({ 
+        tableName, 
+        chantier: orderInfo.chantier,
+        materiaux: orderInfo.materiaux.length,
+        completude: orderInfo.completude,
+        orderData 
+      }, 'Multi-material order stored successfully');
+
+      return true;
+    } catch (error) {
+      logger.error({ 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        orderInfo 
+      }, 'Error storing multi-material order');
+      return false;
+    }
+  }
+
+  /**
+   * Convertit les données d'extraction en commande multi-matériaux
+   */
+  convertExtractionToMultiMaterialOrder(
+    extractionData: ExtractionResult, 
+    phoneNumber: string
+  ): MultiMaterialOrderInfo | null {
+    // Vérifier que nous avons au minimum un chantier et une date/heure
+    if (!extractionData.chantier || !extractionData.livraison.date || !extractionData.livraison.heure) {
+      return null;
+    }
+
+    // Vérifier qu'il y a au moins un matériau avec nom
+    if (extractionData.materiaux.length === 0 || !extractionData.materiaux.some(m => m.nom)) {
+      return null;
+    }
+
+    // Filtrer les matériaux valides
+    const validMaterials = extractionData.materiaux.filter(m => 
+      m.nom && m.nom.trim()
+    ).map(m => ({
+      nom: m.nom.trim(),
+      quantite: m.quantite || '',
+      unite: m.unite || ''
+    }));
+
+    if (validMaterials.length === 0) {
+      return null;
+    }
+
+    return {
+      phone_number: phoneNumber,
+      chantier: extractionData.chantier,
+      materiaux: validMaterials,
+      date_besoin: extractionData.livraison.date,
+      heure_besoin: extractionData.livraison.heure,
+      statut: extractionData.confirmation ? 'confirmee' : 'en_attente',
+      completude: extractionData.completude
+    };
+  }
+
+  /**
+   * Stocke une commande dans la table appropriée (legacy - maintenu pour compatibilité)
    */
   async storeOrder(orderInfo: OrderInfo): Promise<boolean> {
     try {
