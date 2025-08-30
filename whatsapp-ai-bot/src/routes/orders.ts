@@ -27,7 +27,7 @@ router.get('/orders/:chantier', async (req, res) => {
       ordersCount: orders.length
     }, 'Orders retrieved for chantier');
 
-    res.json({
+    return res.json({
       success: true,
       chantier,
       orders,
@@ -40,7 +40,7 @@ router.get('/orders/:chantier', async (req, res) => {
       chantier: req.params.chantier
     }, 'Error retrieving orders');
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Erreur lors de la récupération des commandes'
     });
@@ -51,7 +51,7 @@ router.get('/orders/:chantier', async (req, res) => {
  * Route pour lister tous les chantiers
  * GET /chantiers
  */
-router.get('/chantiers', async (req, res) => {
+router.get('/chantiers', async (_req, res) => {
   try {
     const chantiers = await supabaseService.listChantiers();
     
@@ -59,7 +59,7 @@ router.get('/chantiers', async (req, res) => {
       chantiersCount: chantiers.length
     }, 'Chantiers listed');
 
-    res.json({
+    return res.json({
       success: true,
       chantiers,
       count: chantiers.length
@@ -70,7 +70,7 @@ router.get('/chantiers', async (req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error'
     }, 'Error listing chantiers');
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Erreur lors de la récupération des chantiers'
     });
@@ -110,13 +110,13 @@ router.post('/orders', async (req, res) => {
         phoneNumber: orderInfo.phone_number
       }, 'Manual order created');
 
-      res.json({
+      return res.json({
         success: true,
         message: 'Commande créée avec succès',
         order: orderInfo
       });
     } else {
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         error: 'Erreur lors de la création de la commande'
       });
@@ -128,7 +128,7 @@ router.post('/orders', async (req, res) => {
       body: req.body
     }, 'Error creating manual order');
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Erreur lors de la création de la commande'
     });
