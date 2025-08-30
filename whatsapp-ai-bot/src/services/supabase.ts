@@ -92,7 +92,7 @@ export class SupabaseService {
       }
 
       // Créer la table avec RPC (appel de fonction PostgreSQL)
-      const { data, error } = await this.client.rpc('create_orders_table', {
+      const { error } = await this.client.rpc('create_orders_table', {
         table_name: tableName
       });
 
@@ -139,7 +139,7 @@ export class SupabaseService {
       };
 
       // Insérer la commande
-      const { data, error } = await this.client
+      const { error } = await this.client
         .from(tableName)
         .insert([orderData])
         .select();

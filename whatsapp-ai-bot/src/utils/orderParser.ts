@@ -49,53 +49,53 @@ export function parseOrderFromResponse(response: string): ParsedOrder {
 
     // Essayer d'extraire avec les patterns principaux
     const chantierMatch = cleanResponse.match(patterns.chantier);
-    if (chantierMatch) {
+    if (chantierMatch && chantierMatch[1]) {
       result.chantier = chantierMatch[1].trim();
     }
 
     const materiauMatch = cleanResponse.match(patterns.materiau);
-    if (materiauMatch) {
+    if (materiauMatch && materiauMatch[1]) {
       result.materiau = materiauMatch[1].replace(/^-\s*/, '').trim();
     }
 
     const quantiteMatch = cleanResponse.match(patterns.quantite);
-    if (quantiteMatch) {
+    if (quantiteMatch && quantiteMatch[1]) {
       result.quantite = quantiteMatch[1].trim();
     }
 
     const uniteMatch = cleanResponse.match(patterns.unite);
-    if (uniteMatch) {
+    if (uniteMatch && uniteMatch[1]) {
       result.unite = uniteMatch[1].toLowerCase();
     }
 
     const dateMatch = cleanResponse.match(patterns.date_besoin);
-    if (dateMatch) {
+    if (dateMatch && dateMatch[1]) {
       result.date_besoin = dateMatch[1];
     }
 
     const heureMatch = cleanResponse.match(patterns.heure_besoin);
-    if (heureMatch) {
+    if (heureMatch && heureMatch[1]) {
       result.heure_besoin = heureMatch[1];
     }
 
     // Si les patterns principaux n'ont pas fonctionné, essayer les alternatifs
     if (!result.chantier) {
       const altChantierMatch = cleanResponse.match(alternativePatterns.chantier);
-      if (altChantierMatch) {
+      if (altChantierMatch && altChantierMatch[1]) {
         result.chantier = altChantierMatch[1].trim();
       }
     }
 
     if (!result.materiau) {
       const altMateriauMatch = cleanResponse.match(alternativePatterns.materiau);
-      if (altMateriauMatch) {
+      if (altMateriauMatch && altMateriauMatch[1]) {
         result.materiau = altMateriauMatch[1].trim();
       }
     }
 
     if (!result.quantite || !result.unite) {
       const altQuantiteMatch = cleanResponse.match(alternativePatterns.quantite);
-      if (altQuantiteMatch) {
+      if (altQuantiteMatch && altQuantiteMatch[1] && altQuantiteMatch[2]) {
         result.quantite = altQuantiteMatch[1].trim();
         result.unite = altQuantiteMatch[2].toLowerCase();
       }
@@ -103,14 +103,14 @@ export function parseOrderFromResponse(response: string): ParsedOrder {
 
     if (!result.date_besoin) {
       const altDateMatch = cleanResponse.match(alternativePatterns.date);
-      if (altDateMatch) {
+      if (altDateMatch && altDateMatch[1]) {
         result.date_besoin = altDateMatch[1];
       }
     }
 
     if (!result.heure_besoin) {
       const altHeureMatch = cleanResponse.match(alternativePatterns.heure);
-      if (altHeureMatch) {
+      if (altHeureMatch && altHeureMatch[1]) {
         result.heure_besoin = altHeureMatch[1];
       }
     }
