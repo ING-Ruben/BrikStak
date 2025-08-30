@@ -53,6 +53,9 @@ BEGIN
     table_name
   );
 
+  -- Créer les politiques RLS pour cette table
+  PERFORM create_rls_policies(table_name);
+
   RETURN TRUE;
 EXCEPTION
   WHEN OTHERS THEN
@@ -73,13 +76,35 @@ END;
 $$;
 
 -- 3. Politique de sécurité RLS (Row Level Security)
--- Note: Adaptez selon vos besoins de sécurité
+-- Note: Les politiques RLS seront créées dynamiquement pour chaque table de commandes
+-- Voici un exemple de fonction pour créer des politiques RLS sur les tables dynamiques:
 
--- Pour les tables de commandes, permettre toutes les opérations
--- (vous pouvez restreindre selon vos besoins)
-CREATE POLICY IF NOT EXISTS "Enable all operations for all users" 
-ON information_schema.tables FOR ALL 
-USING (true);
+CREATE OR REPLACE FUNCTION create_rls_policies(table_name TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Activer RLS sur la table
+  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
+  
+  -- Créer une politique permettant toutes les opérations
+  -- (vous pouvez restreindre selon vos besoins de sécurité)
+  EXECUTE format('
+    CREATE POLICY IF NOT EXISTS %I 
+    ON %I FOR ALL 
+    USING (true)',
+    'policy_' || table_name || '_all_operations',
+    table_name
+  );
+  
+  RETURN TRUE;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'Error creating RLS policies for table %: %', table_name, SQLERRM;
+    RETURN FALSE;
+END;
+$$;
 
 -- 4. Table de logs pour tracer les actions (optionnel)
 CREATE TABLE IF NOT EXISTS brikstik_logs (
@@ -95,6 +120,13 @@ CREATE TABLE IF NOT EXISTS brikstik_logs (
 CREATE INDEX IF NOT EXISTS idx_brikstik_logs_created_at ON brikstik_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_brikstik_logs_phone ON brikstik_logs (phone_number);
 CREATE INDEX IF NOT EXISTS idx_brikstik_logs_table ON brikstik_logs (table_name);
+
+-- Activer RLS et créer des politiques pour la table de logs
+ALTER TABLE brikstik_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY IF NOT EXISTS "Enable all operations for all users on logs" 
+ON brikstik_logs FOR ALL 
+USING (true);
 
 -- 5. Fonction pour logger les actions (optionnel)
 CREATE OR REPLACE FUNCTION log_brikstik_action(
