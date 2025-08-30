@@ -124,15 +124,11 @@ export function parseOrderFromResponse(response: string, userMessage?: string, c
     }
 
     // Vérifier si la commande est confirmée
-    // Chercher la confirmation dans la réponse de l'IA ET dans le message utilisateur
-    const confirmationInResponse = /commande prête à être transmise/i.test(cleanResponse) ||
-                                  /commande confirmée/i.test(cleanResponse) ||
-                                  /parfait|ok|c'est bon|validé|confirmé/i.test(cleanResponse);
-    
+    // Seule la réponse exacte "ok" de l'utilisateur confirme la commande
     const confirmationInUserMessage = userMessage ? 
-      (/oui|yes|confirm|je confirme|c'est bon|ok|parfait|validé|d'accord/i.test(userMessage.trim())) : false;
+      (/^ok$/i.test(userMessage.trim())) : false;
     
-    result.is_confirmed = confirmationInResponse || confirmationInUserMessage;
+    result.is_confirmed = confirmationInUserMessage;
 
     // Vérifier si toutes les informations sont présentes
     result.is_complete = !!(result.chantier && result.materiau && result.quantite && 
