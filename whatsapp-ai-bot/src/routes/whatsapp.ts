@@ -147,10 +147,24 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
 
     // Traitement et stockage de la commande si elle est complète et confirmée
     try {
-      const parsedOrder = parseOrderFromResponse(aiResponse);
+      const parsedOrder = parseOrderFromResponse(aiResponse, messageBody, history);
+      
+      // Log détaillé du parsing
+      logger.info({
+        phoneNumber,
+        userMessage: messageBody,
+        parsedOrder,
+        isComplete: parsedOrder.is_complete,
+        isConfirmed: parsedOrder.is_confirmed
+      }, 'Order parsing result');
       
       if (parsedOrder.is_complete && parsedOrder.is_confirmed) {
         const orderInfo = convertToOrderInfo(parsedOrder, phoneNumber);
+        
+        logger.info({
+          phoneNumber,
+          orderInfo
+        }, 'Attempting to store order in Supabase');
         
         if (orderInfo && validateOrderFormats(orderInfo)) {
           const stored = await supabaseService.storeOrder(orderInfo);
@@ -160,24 +174,32 @@ router.post('/whatsapp', twilioValidation, async (req, res) => {
               phoneNumber,
               chantier: orderInfo.chantier,
               materiau: orderInfo.materiau
-            }, 'Order stored successfully in Supabase');
+            }, '✅ Order stored successfully in Supabase');
           } else {
-            logger.warn({
+            logger.error({
               phoneNumber,
               orderInfo
-            }, 'Failed to store order in Supabase');
+            }, '❌ Failed to store order in Supabase');
           }
         } else {
           logger.warn({
             phoneNumber,
-            parsedOrder
-          }, 'Order format validation failed');
+            parsedOrder,
+            orderInfo
+          }, '❌ Order format validation failed');
         }
       } else if (parsedOrder.is_complete && !parsedOrder.is_confirmed) {
         logger.info({
           phoneNumber,
-          chantier: parsedOrder.chantier
-        }, 'Order is complete but not yet confirmed');
+          chantier: parsedOrder.chantier,
+          userMessage: messageBody
+        }, '⏳ Order is complete but not yet confirmed');
+      } else {
+        logger.info({
+          phoneNumber,
+          parsedOrder,
+          userMessage: messageBody
+        }, '📝 Order is incomplete or not ready');
       }
     } catch (error) {
       logger.error({
