@@ -97,7 +97,7 @@ export class SupabaseService {
   private async tableExists(tableName: string): Promise<boolean> {
     try {
       // Méthode 1: Tenter une requête simple sur la table
-      const { data, error } = await this.client
+      const { error } = await this.client
         .from(tableName)
         .select('*')
         .limit(1);
