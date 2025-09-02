@@ -90,8 +90,15 @@ BEGIN
   
   -- Créer une politique permettant toutes les opérations
   -- (vous pouvez restreindre selon vos besoins de sécurité)
+  -- Supprimer la politique si elle existe déjà
+  EXECUTE format('DROP POLICY IF EXISTS %I ON %I',
+    'policy_' || table_name || '_all_operations',
+    table_name
+  );
+  
+  -- Créer la nouvelle politique
   EXECUTE format('
-    CREATE POLICY IF NOT EXISTS %I 
+    CREATE POLICY %I 
     ON %I FOR ALL 
     USING (true)',
     'policy_' || table_name || '_all_operations',
@@ -124,7 +131,11 @@ CREATE INDEX IF NOT EXISTS idx_brikstik_logs_table ON brikstik_logs (table_name)
 -- Activer RLS et créer des politiques pour la table de logs
 ALTER TABLE brikstik_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Enable all operations for all users on logs" 
+-- Supprimer la politique si elle existe déjà
+DROP POLICY IF EXISTS "Enable all operations for all users on logs" ON brikstik_logs;
+
+-- Créer la politique
+CREATE POLICY "Enable all operations for all users on logs" 
 ON brikstik_logs FOR ALL 
 USING (true);
 
