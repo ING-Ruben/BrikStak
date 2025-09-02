@@ -12,6 +12,7 @@ export const EXTRACTION_SYSTEM_INSTRUCTIONS = `Tu es un système d'extraction de
 - Retourner UNIQUEMENT du JSON valide, aucun texte
 - Supporter plusieurs matériaux par commande
 - Valider et scorer la complétude des données
+- CONVERTIR LES DATES RELATIVES EN DATES ABSOLUES
 
 📊 FORMAT DE SORTIE JSON OBLIGATOIRE :
 {
@@ -36,10 +37,20 @@ export const EXTRACTION_SYSTEM_INSTRUCTIONS = `Tu es un système d'extraction de
 2. MATÉRIAUX : Array avec tous les matériaux demandés
 3. QUANTITÉS : Valeurs numériques uniquement (convertir "dix" → "10")
 4. UNITÉS : Standardiser (m3, kg, m2, tonnes, sacs, palettes, m, cm, l)
-5. DATE : Format JJ/MM/AAAA uniquement
-6. HEURE : Format HH:MM uniquement
+5. DATE : TOUJOURS convertir en format JJ/MM/AAAA :
+   - "demain" → date de demain en JJ/MM/AAAA
+   - "après-demain" → date d'après-demain en JJ/MM/AAAA
+   - "lundi prochain" → date du prochain lundi en JJ/MM/AAAA
+   - "dans 3 jours" → date dans 3 jours en JJ/MM/AAAA
+   - Utilise la date actuelle comme référence pour calculer
+6. HEURE : TOUJOURS convertir en format HH:MM :
+   - "14h" → "14:00"
+   - "14h30" → "14:30"
+   - "2h de l'après-midi" → "14:00"
+   - "matin" → "08:00" (par défaut)
+   - "après-midi" → "14:00" (par défaut)
 7. COMPLÉTUDE : Score de 0.0 à 1.0 basé sur les infos présentes
-8. CONFIRMATION : true SEULEMENT si l'utilisateur a dit exactement "ok"
+8. CONFIRMATION : true si l'utilisateur confirme ("ok", "je confirme", "c'est bon", "validé")
 
 📏 CALCUL DE COMPLÉTUDE :
 - Chantier présent : +0.2
@@ -193,6 +204,86 @@ export class ExtractionAgent {
   }
 
   /**
+   * Convertit différents formats de date en JJ/MM/AAAA
+   */
+  private convertToDateFormat(dateStr: string): string | null {
+    if (!dateStr) return null;
+    
+    // Si déjà au bon format, retourner tel quel
+    if (this.validateDate(dateStr)) return dateStr;
+    
+    const today = new Date();
+    const lowerDate = dateStr.toLowerCase().trim();
+    
+    // Gérer les dates relatives
+    if (lowerDate === 'demain') {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      return this.formatDate(tomorrow);
+    }
+    
+    if (lowerDate === 'après-demain' || lowerDate === 'apres-demain') {
+      const afterTomorrow = new Date(today);
+      afterTomorrow.setDate(today.getDate() + 2);
+      return this.formatDate(afterTomorrow);
+    }
+    
+    if (lowerDate === "aujourd'hui" || lowerDate === 'aujourd hui') {
+      return this.formatDate(today);
+    }
+    
+    // Gérer "dans X jours"
+    const daysMatch = lowerDate.match(/dans\s+(\d+)\s+jours?/);
+    if (daysMatch && daysMatch[1]) {
+      const days = parseInt(daysMatch[1]);
+      const futureDate = new Date(today);
+      futureDate.setDate(today.getDate() + days);
+      return this.formatDate(futureDate);
+    }
+    
+    return null;
+  }
+
+  /**
+   * Convertit différents formats d'heure en HH:MM
+   */
+  private convertToTimeFormat(timeStr: string): string | null {
+    if (!timeStr) return null;
+    
+    // Si déjà au bon format, retourner tel quel
+    if (this.validateTime(timeStr)) return timeStr;
+    
+    const lowerTime = timeStr.toLowerCase().trim();
+    
+    // Gérer les formats comme "14h" ou "14h30"
+    const hourMatch = lowerTime.match(/(\d{1,2})h(\d{0,2})/);
+    if (hourMatch && hourMatch[1]) {
+      const hours = hourMatch[1].padStart(2, '0');
+      const minutes = hourMatch[2] || '00';
+      const formatted = `${hours}:${minutes.padStart(2, '0')}`;
+      if (this.validateTime(formatted)) return formatted;
+    }
+    
+    // Gérer les mots-clés
+    if (lowerTime.includes('matin')) return '08:00';
+    if (lowerTime.includes('midi')) return '12:00';
+    if (lowerTime.includes('après-midi') || lowerTime.includes('apres-midi')) return '14:00';
+    if (lowerTime.includes('soir')) return '18:00';
+    
+    return null;
+  }
+
+  /**
+   * Formate une date en JJ/MM/AAAA
+   */
+  private formatDate(date: Date): string {
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  /**
    * Valide et nettoie les données extraites
    */
   private validateAndCleanData(data: any): { result: ExtractionResult; errors: string[] } {
@@ -250,16 +341,28 @@ export class ExtractionAgent {
 
       // Valider livraison
       if (data.livraison && typeof data.livraison === 'object') {
-        if (data.livraison.date && this.validateDate(data.livraison.date)) {
-          result.livraison.date = data.livraison.date;
-        } else if (data.livraison.date) {
-          errors.push(`Format de date invalide: ${data.livraison.date}`);
+        // Essayer de convertir et valider la date
+        if (data.livraison.date) {
+          const convertedDate = this.convertToDateFormat(data.livraison.date);
+          if (convertedDate && this.validateDate(convertedDate)) {
+            result.livraison.date = convertedDate;
+          } else if (this.validateDate(data.livraison.date)) {
+            result.livraison.date = data.livraison.date;
+          } else {
+            errors.push(`Format de date invalide: ${data.livraison.date}`);
+          }
         }
 
-        if (data.livraison.heure && this.validateTime(data.livraison.heure)) {
-          result.livraison.heure = data.livraison.heure;
-        } else if (data.livraison.heure) {
-          errors.push(`Format d'heure invalide: ${data.livraison.heure}`);
+        // Essayer de convertir et valider l'heure
+        if (data.livraison.heure) {
+          const convertedTime = this.convertToTimeFormat(data.livraison.heure);
+          if (convertedTime && this.validateTime(convertedTime)) {
+            result.livraison.heure = convertedTime;
+          } else if (this.validateTime(data.livraison.heure)) {
+            result.livraison.heure = data.livraison.heure;
+          } else {
+            errors.push(`Format d'heure invalide: ${data.livraison.heure}`);
+          }
         }
       }
 
