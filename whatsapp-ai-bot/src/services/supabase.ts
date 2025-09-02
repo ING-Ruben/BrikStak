@@ -92,24 +92,51 @@ export class SupabaseService {
 
   /**
    * Vérifie si une table existe
+   * Utilise une approche plus fiable en tentant une requête SELECT sur la table
    */
   private async tableExists(tableName: string): Promise<boolean> {
     try {
+      // Méthode 1: Tenter une requête simple sur la table
       const { data, error } = await this.client
-        .from('information_schema.tables')
-        .select('table_name')
-        .eq('table_schema', 'public')
-        .eq('table_name', tableName)
-        .maybeSingle();
+        .from(tableName)
+        .select('*')
+        .limit(1);
 
       if (error) {
-        logger.warn({ error: error.message, tableName }, 'Error checking table existence');
-        return false;
+        // Si l'erreur indique que la table n'existe pas, c'est ce qu'on cherche
+        if (error.code === 'PGRST116' || 
+            error.message.includes('relation') || 
+            error.message.includes('does not exist') ||
+            error.message.includes('not found')) {
+          logger.debug({ tableName }, 'Table does not exist');
+          return false;
+        }
+        
+        // Pour toute autre erreur, on considère que la table pourrait exister
+        // mais qu'il y a un problème de permissions ou autre
+        logger.warn({ error: error.message, tableName }, 'Unexpected error checking table existence, assuming table exists');
+        return true;
       }
 
-      return data !== null;
+      // Si pas d'erreur, la table existe
+      logger.debug({ tableName }, 'Table exists');
+      return true;
     } catch (error) {
-      logger.warn({ error: error instanceof Error ? error.message : 'Unknown error', tableName }, 'Error checking table existence');
+      // En cas d'erreur inattendue, on essaie la méthode alternative
+      try {
+        // Méthode 2: Utiliser RPC pour vérifier l'existence (si disponible)
+        const { data: exists, error: rpcError } = await this.client
+          .rpc('table_exists', { table_name: tableName });
+        
+        if (!rpcError && exists !== undefined) {
+          return exists;
+        }
+      } catch {
+        // Ignorer l'erreur RPC si la fonction n'existe pas
+      }
+      
+      // Par défaut, on considère que la table n'existe pas
+      logger.warn({ error: error instanceof Error ? error.message : 'Unknown error', tableName }, 'Error checking table existence, assuming table does not exist');
       return false;
     }
   }
