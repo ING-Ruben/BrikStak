@@ -78,7 +78,8 @@ function sendChunkedResponse(res: express.Response, chunks: string[]): void {
 /**
  * Route principale pour les webhooks WhatsApp de Twilio
  */
-router.post('/whatsapp', twilioValidation, async (req, res) => {
+// Route principale pour les webhooks WhatsApp (accepte / et /whatsapp)
+router.post('/', twilioValidation, async (req, res) => {
   try {
     const body = req.body as { Body?: string; From?: string; [key: string]: unknown };
     const messageBody = body.Body?.trim();
