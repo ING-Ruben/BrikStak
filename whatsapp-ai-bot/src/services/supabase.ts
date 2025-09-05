@@ -206,19 +206,11 @@ export class SupabaseService {
   }
 
   /**
-   * Stocke une commande multi-matériaux (nouvelle méthode)
+   * Stocke une commande multi-matériaux dans la table centrale (nouvelle méthode)
    */
   async storeMultiMaterialOrder(orderInfo: MultiMaterialOrderInfo): Promise<boolean> {
     try {
-      const tableName = `multi_${this.normalizeTableName(orderInfo.chantier)}`;
-      
-      // Créer la table multi-matériaux si nécessaire
-      const tableCreated = await this.createMultiMaterialTableIfNotExists(tableName);
-      if (!tableCreated) {
-        throw new Error(`Failed to create or access multi-material table: ${tableName}`);
-      }
-
-      // Préparer les données pour l'insertion
+      // Préparer les données pour l'insertion dans la table centrale
       const orderData = {
         chantier: orderInfo.chantier,
         materiaux_json: JSON.stringify(orderInfo.materiaux),
@@ -230,31 +222,30 @@ export class SupabaseService {
         created_at: new Date().toISOString()
       };
 
-      // Insérer la commande
+      // Insérer la commande dans la table centrale
       const { error } = await this.client
-        .from(tableName)
+        .from('commandes_centrales')
         .insert([orderData])
         .select();
 
       if (error) {
-        logger.error({ error: error.message, tableName, orderData }, 'Failed to insert multi-material order');
+        logger.error({ error: error.message, orderData }, 'Failed to insert order in central table');
         return false;
       }
 
       logger.info({ 
-        tableName, 
         chantier: orderInfo.chantier,
         materiaux: orderInfo.materiaux.length,
         completude: orderInfo.completude,
         orderData 
-      }, 'Multi-material order stored successfully');
+      }, 'Order stored successfully in central table');
 
       return true;
     } catch (error) {
       logger.error({ 
         error: error instanceof Error ? error.message : 'Unknown error',
         orderInfo 
-      }, 'Error storing multi-material order');
+      }, 'Error storing order in central table');
       return false;
     }
   }
@@ -389,31 +380,29 @@ export class SupabaseService {
   }
 
   /**
-   * Liste tous les chantiers (tables de commandes)
+   * Liste tous les chantiers depuis la table centrale
    */
   async listChantiers(): Promise<string[]> {
     try {
       const { data, error } = await this.client
-        .from('information_schema.tables')
-        .select('table_name')
-        .eq('table_schema', 'public')
-        .like('table_name', 'commandes_%');
+        .from('commandes_centrales')
+        .select('chantier')
+        .order('chantier');
 
       if (error) {
-        logger.error({ error: error.message }, 'Failed to list chantiers');
+        logger.error({ error: error.message }, 'Failed to list chantiers from central table');
         return [];
       }
 
-      const chantiers = (data || []).map(table => 
-        table.table_name.replace('commandes_', '').replace(/_/g, ' ')
-      );
+      // Extraire les noms de chantiers uniques
+      const chantiers = [...new Set((data || []).map(row => row.chantier))];
 
-      logger.info({ chantiersCount: chantiers.length }, 'Chantiers listed');
+      logger.info({ chantiersCount: chantiers.length }, 'Chantiers listed from central table');
       return chantiers;
     } catch (error) {
       logger.error({ 
         error: error instanceof Error ? error.message : 'Unknown error'
-      }, 'Error listing chantiers');
+      }, 'Error listing chantiers from central table');
       return [];
     }
   }
