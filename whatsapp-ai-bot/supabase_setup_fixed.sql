@@ -1,4 +1,4 @@
--- Script SQL pour la migration vers l'architecture multi-matériaux
+-- Script SQL pour la migration vers l'architecture multi-matériaux (CORRIGÉ)
 -- À exécuter dans Supabase SQL Editor
 
 -- 1. Fonction pour créer des tables multi-matériaux
@@ -143,31 +143,59 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 4. Vue pour analyser les performances des agents
-CREATE OR REPLACE VIEW agent_performance_summary AS
-SELECT 
-  DATE_TRUNC('hour', created_at) as hour_bucket,
-  COUNT(*) as total_orders,
-  AVG(completude) as avg_completude,
-  COUNT(*) FILTER (WHERE completude >= 0.8) as high_quality_extractions,
-  COUNT(*) FILTER (WHERE statut = 'confirmee') as confirmed_orders,
-  ROUND(
-    COUNT(*) FILTER (WHERE completude >= 0.8) * 100.0 / COUNT(*), 2
-  ) as quality_percentage
-FROM (
-  -- Union de toutes les tables multi-matériaux
-  SELECT chantier, completude, statut, created_at
-  FROM information_schema.tables t
-  CROSS JOIN LATERAL (
-    EXECUTE format('SELECT chantier, completude, statut, created_at FROM %I', t.table_name)
-  ) AS orders
-  WHERE t.table_schema = 'public' 
-    AND t.table_name LIKE 'multi_commandes_%'
-) all_orders
-GROUP BY DATE_TRUNC('hour', created_at)
-ORDER BY hour_bucket DESC;
+-- 4. Fonction pour obtenir les statistiques globales (remplace la vue problématique)
+CREATE OR REPLACE FUNCTION get_agent_performance_summary(hours_back INTEGER DEFAULT 24)
+RETURNS TABLE(
+  hour_bucket TIMESTAMP WITH TIME ZONE,
+  total_orders BIGINT,
+  avg_completude DECIMAL,
+  high_quality_extractions BIGINT,
+  confirmed_orders BIGINT,
+  quality_percentage DECIMAL
+) AS $$
+DECLARE
+  table_record RECORD;
+  query_text TEXT := '';
+BEGIN
+  -- Construire la requête union pour toutes les tables multi-matériaux
+  FOR table_record IN 
+    SELECT t.table_name
+    FROM information_schema.tables t
+    WHERE t.table_schema = 'public' 
+      AND t.table_name LIKE 'multi_commandes_%'
+  LOOP
+    IF query_text != '' THEN
+      query_text := query_text || ' UNION ALL ';
+    END IF;
+    
+    query_text := query_text || format('SELECT chantier, completude, statut, created_at FROM %I', table_record.table_name);
+  END LOOP;
+  
+  -- Si aucune table trouvée, retourner vide
+  IF query_text = '' THEN
+    RETURN;
+  END IF;
+  
+  -- Exécuter la requête finale
+  RETURN QUERY EXECUTE format('
+    SELECT 
+      DATE_TRUNC(''hour'', created_at) as hour_bucket,
+      COUNT(*) as total_orders,
+      ROUND(AVG(completude), 3) as avg_completude,
+      COUNT(*) FILTER (WHERE completude >= 0.8) as high_quality_extractions,
+      COUNT(*) FILTER (WHERE statut = ''confirmee'') as confirmed_orders,
+      ROUND(
+        COUNT(*) FILTER (WHERE completude >= 0.8) * 100.0 / COUNT(*), 2
+      ) as quality_percentage
+    FROM (%s) all_orders
+    WHERE created_at >= NOW() - INTERVAL ''%s hours''
+    GROUP BY DATE_TRUNC(''hour'', created_at)
+    ORDER BY hour_bucket DESC
+  ', query_text, hours_back);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 5. Fonction de nettoyage pour les anciennes données (à utiliser avec précaution)
+-- 5. Fonction de nettoyage pour les anciennes données
 CREATE OR REPLACE FUNCTION cleanup_old_orders(days_to_keep INTEGER DEFAULT 90)
 RETURNS TABLE(table_name TEXT, deleted_count BIGINT) AS $$
 DECLARE
@@ -193,49 +221,42 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 6. Politique de sécurité RLS (Row Level Security) - Optionnel
--- Décommenter si vous souhaitez activer RLS
-
-/*
--- Activer RLS sur toutes les tables de commandes
-DO $$
-DECLARE
-  table_record RECORD;
+-- 6. Fonction pour lister toutes les tables de commandes
+CREATE OR REPLACE FUNCTION get_all_order_tables()
+RETURNS TABLE(table_name TEXT, table_type TEXT, estimated_rows BIGINT) AS $$
 BEGIN
-  FOR table_record IN 
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public' 
-      AND (table_name LIKE 'commandes_%' OR table_name LIKE 'multi_commandes_%')
-  LOOP
-    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_record.table_name);
-    
-    -- Politique : les utilisateurs ne peuvent voir que leurs propres commandes
-    EXECUTE format('
-      CREATE POLICY IF NOT EXISTS %I_policy ON %I
-      FOR ALL USING (phone_number = current_setting(''app.current_phone'', true))
-    ', table_record.table_name, table_record.table_name);
-  END LOOP;
-END $$;
-*/
+  RETURN QUERY
+  SELECT 
+    t.table_name::TEXT,
+    CASE 
+      WHEN t.table_name LIKE 'multi_commandes_%' THEN 'multi_material'
+      WHEN t.table_name LIKE 'commandes_%' THEN 'legacy'
+      ELSE 'unknown'
+    END as table_type,
+    COALESCE(s.n_tup_ins - s.n_tup_del, 0) as estimated_rows
+  FROM information_schema.tables t
+  LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name
+  WHERE t.table_schema = 'public' 
+    AND (t.table_name LIKE 'commandes_%' OR t.table_name LIKE 'multi_commandes_%')
+  ORDER BY t.table_name;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 7. Instructions d'utilisation
+-- Instructions d'utilisation :
 
--- Exemple d'utilisation des nouvelles fonctions :
+-- 1. Créer une table multi-matériaux pour un nouveau chantier
+-- SELECT create_multi_material_orders_table('multi_commandes_test_chantier');
 
--- Créer une table multi-matériaux pour un nouveau chantier
--- SELECT create_multi_material_orders_table('multi_commandes_paris_nord');
+-- 2. Obtenir des statistiques d'une table
+-- SELECT * FROM get_multi_material_stats('multi_commandes_test_chantier');
 
--- Migrer des données legacy vers multi-matériaux
--- SELECT migrate_legacy_to_multi_material('commandes_paris_nord', 'multi_commandes_paris_nord');
+-- 3. Voir les performances des agents (dernières 24h)
+-- SELECT * FROM get_agent_performance_summary(24);
 
--- Obtenir des statistiques
--- SELECT * FROM get_multi_material_stats('multi_commandes_paris_nord');
+-- 4. Lister toutes les tables de commandes
+-- SELECT * FROM get_all_order_tables();
 
--- Voir les performances des agents
--- SELECT * FROM agent_performance_summary WHERE hour_bucket >= NOW() - INTERVAL '24 hours';
-
--- Nettoyer les anciennes données (commandes livrées de plus de 90 jours)
+-- 5. Nettoyer les anciennes données
 -- SELECT * FROM cleanup_old_orders(90);
 
--- Fin du script de migration
+-- Script prêt à utiliser !
