@@ -8,6 +8,7 @@ import { sessionManager } from '../services/session';
 import { chunkText } from '../utils/chunkText';
 import { supabaseService } from '../services/supabase';
 import { parseOrderFromResponse } from '../utils/orderParser';
+import { transcriptionService, TranscriptionService } from '../services/transcriptionService';
 
 const logger = pino({ name: 'whatsapp-route' });
 const router = express.Router();
@@ -41,6 +42,7 @@ function handleSpecialCommands(command: string, phoneNumber: string): string | n
 
 *Commandes disponibles :*
 • Envoyez simplement votre message pour obtenir une réponse
+• 🎤 Envoyez un message vocal (transcription automatique)
 • /reset - Efface l'historique de conversation
 • /help - Affiche cette aide
 
@@ -48,8 +50,9 @@ function handleSpecialCommands(command: string, phoneNumber: string): string | n
 • Conversation avec mémoire (2h max)
 • Réponses personnalisées et contextuelles
 • Support multilingue
+• Transcription automatique des messages vocaux
 
-Posez-moi vos questions ! 😊`;
+Posez-moi vos questions par texte ou vocal ! 😊`;
 
     case '/reset':
       sessionManager.resetHistory(phoneNumber);
@@ -81,19 +84,86 @@ function sendChunkedResponse(res: express.Response, chunks: string[]): void {
 // Route principale pour les webhooks WhatsApp (accepte / et /whatsapp)
 router.post('/', twilioValidation, async (req, res) => {
   try {
-    const body = req.body as { Body?: string; From?: string; [key: string]: unknown };
-    const messageBody = body.Body?.trim();
+    const body = req.body as { 
+      Body?: string; 
+      From?: string; 
+      NumMedia?: string;
+      MediaUrl0?: string;
+      MediaContentType0?: string;
+      [key: string]: unknown;
+    };
+    
+    let messageBody = body.Body?.trim();
     const fromNumber = body.From;
 
     // Validation des paramètres requis
-    if (!messageBody || !fromNumber) {
-      logger.warn({ body }, 'Missing required parameters Body or From');
-      return res.status(400).send('Missing required parameters');
+    if (!fromNumber) {
+      logger.warn({ body }, 'Missing required parameter From');
+      return res.status(400).send('Missing required parameter From');
     }
 
     // Extraction du numéro de téléphone (format: "whatsapp:+1234567890")
     const phoneNumber = fromNumber.replace('whatsapp:', '');
-    
+
+    // Debug: Log complet du body pour les médias
+    if (body.NumMedia && parseInt(body.NumMedia) > 0) {
+      logger.info({ 
+        phoneNumber,
+        fullBody: body,
+        numMedia: body.NumMedia,
+        mediaUrl: body.MediaUrl0,
+        contentType: body.MediaContentType0
+      }, 'Media message received - full debug');
+    }
+
+    // Gestion des messages vocaux
+    if (TranscriptionService.isVoiceMessage(body)) {
+      try {
+        logger.info({ phoneNumber, mediaUrl: body.MediaUrl0, contentType: body.MediaContentType0 }, 'Voice message received');
+        
+        const voiceInfo = TranscriptionService.extractVoiceMessageInfo(body);
+        if (!voiceInfo) {
+          throw new Error('Could not extract voice message information');
+        }
+
+        // Transcrire le message vocal
+        const transcriptionResult = await transcriptionService.transcribeVoiceMessage(
+          voiceInfo.mediaUrl, 
+          voiceInfo.contentType
+        );
+
+        messageBody = transcriptionResult.text;
+
+        logger.info({
+          phoneNumber,
+          transcriptionLength: messageBody.length,
+          processingTime: transcriptionResult.processingTime,
+          preview: messageBody.substring(0, 50)
+        }, 'Voice message transcribed successfully');
+
+      } catch (transcriptionError) {
+        logger.error({
+          error: transcriptionError instanceof Error ? transcriptionError.message : 'Unknown error',
+          phoneNumber
+        }, 'Failed to transcribe voice message');
+
+        // Envoyer un message d'erreur à l'utilisateur
+        const errorMessage = transcriptionError instanceof Error ? 
+          transcriptionError.message : 
+          'Désolé, je n\'ai pas pu traiter votre message vocal. Pouvez-vous réessayer ou envoyer un message texte ?';
+        
+        const chunks = chunkText(errorMessage);
+        return sendChunkedResponse(res, chunks);
+      }
+    }
+
+    // Validation que nous avons maintenant un message (texte ou transcrit)
+    if (!messageBody) {
+      logger.warn({ body }, 'No text content found (neither Body nor transcribed voice)');
+      const chunks = chunkText('Désolé, je n\'ai pas reçu de message. Pouvez-vous réessayer ?');
+      return sendChunkedResponse(res, chunks);
+    }
+
     logger.info(
       { 
         phoneNumber, 
