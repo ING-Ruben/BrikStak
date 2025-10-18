@@ -50,7 +50,7 @@ export class OpenAIService {
       apiKey
     });
 
-    this.model = process.env['OPENAI_MODEL'] || 'gpt-4o-mini';
+    this.model = process.env['OPENAI_MODEL'] || 'gpt-5-mini';
     logger.info({ model: this.model }, 'OpenAI service initialized');
   }
 

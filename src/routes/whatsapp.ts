@@ -74,8 +74,23 @@ function sendChunkedResponse(res: express.Response, chunks: string[]): void {
     twiml.message(chunk);
   });
 
+  const twimlString = twiml.toString();
+  
+  logger.info({
+    chunksCount: chunks.length,
+    chunks: chunks,
+    twimlResponse: twimlString
+  }, 'Sending TwiML response to Twilio');
+
   res.type('text/xml');
-  res.send(twiml.toString());
+  res.status(200);
+  res.send(twimlString);
+  
+  logger.info({
+    responseStatus: 200,
+    contentType: 'text/xml',
+    twimlLength: twimlString.length
+  }, 'HTTP response sent to Twilio');
 }
 
 /**
@@ -205,7 +220,7 @@ router.post('/', twilioValidation, async (req, res) => {
       logger.info({ phoneNumber }, 'Starting dual agent processing');
 
       // Lancement parallèle des 2 agents avec Promise.all() et timeout
-      const AGENT_TIMEOUT = 30000; // 30 secondes timeout
+      const AGENT_TIMEOUT = 60000; // 60 secondes timeout pour GPT-5-mini
       
       const conversationPromise = Promise.race([
         conversationalAgent.respond(messageBody, history),
@@ -248,13 +263,21 @@ router.post('/', twilioValidation, async (req, res) => {
           }
         },
         decision: {
-          shouldStore: extractionResult.data.completude >= 0.8 && extractionResult.data.confirmation,
+          shouldStore: extractionResult.data.completude >= 0.8,
           fallbackUsed: false
         }
       }, 'Dual agent processing completed');
 
-      // Déterminer si on doit stocker la commande
-      shouldStore = extractionResult.data.completude >= 0.8 && extractionResult.data.confirmation && extractionResult.isValid;
+      // Déterminer si on doit stocker la commande (plus strict sur la confirmation)
+      const isExplicitConfirmation = messageBody.toLowerCase().trim() === 'ok' || 
+                                     messageBody.toLowerCase().trim() === 'je confirme' ||
+                                     messageBody.toLowerCase().trim() === 'oui' ||
+                                     messageBody.toLowerCase().trim() === 'c\'est bon';
+      
+      shouldStore = extractionResult.data.completude >= 0.8 && 
+                   extractionResult.data.confirmation && 
+                   extractionResult.isValid &&
+                   isExplicitConfirmation;
 
     } catch (error) {
       // Fallback vers l'ancien système en cas d'échec des agents
@@ -387,24 +410,40 @@ router.post('/', twilioValidation, async (req, res) => {
       }, extractionResult.data.confirmation ? '⏳ Order complete but not confirmed' : '📝 Order incomplete or not ready');
     }
 
+    // Nettoyage du message pour éviter les problèmes d'encodage TwiML
+    const cleanedMessage = conversationResult.message
+      .replace(/[^\x20-\x7E\u00C0-\u00FF]/g, '') // Garder seulement ASCII + Latin-1
+      .replace(/&/g, '&amp;')       // Échapper les caractères XML
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\s+/g, ' ')         // Normaliser les espaces
+      .trim();
+    
     // Découpage du message si nécessaire
-    const responseChunks = chunkText(conversationResult.message);
+    const responseChunks = chunkText(cleanedMessage);
     
     logger.info(
       { 
         phoneNumber,
-        responseLength: conversationResult.message.length,
+        originalMessageLength: conversationResult.message.length,
+        cleanedMessageLength: cleanedMessage.length,
         chunksCount: responseChunks.length,
         activeSessionsCount: sessionManager.getActiveSessionsCount(),
         fallbackUsed,
         agentConfidence: conversationResult.confidence,
-        extractionCompletude: extractionResult.data.completude
+        extractionCompletude: extractionResult.data.completude,
+        originalMessage: conversationResult.message.substring(0, 100),
+        cleanedMessage: cleanedMessage.substring(0, 100)
       }, 
       'Sending response to WhatsApp'
     );
 
     // Envoi de la réponse
     sendChunkedResponse(res, responseChunks);
+    
+    logger.info({ phoneNumber }, 'Response sent successfully to Twilio');
 
   } catch (error) {
     logger.error(
@@ -423,6 +462,31 @@ router.post('/', twilioValidation, async (req, res) => {
     res.type('text/xml');
     res.status(500).send(twiml.toString());
   }
+});
+
+// Route de test pour vérifier la connectivité Twilio
+router.get('/test', (_req, res) => {
+  logger.info('Test endpoint called');
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    message: 'WhatsApp bot is running'
+  });
+});
+
+// Route de test TwiML simple
+router.post('/test-twiml', (req, res) => {
+  logger.info({ body: req.body }, 'Test TwiML endpoint called');
+  
+  const MessagingResponse = twilio.twiml.MessagingResponse;
+  const twiml = new MessagingResponse();
+  twiml.message('Test message from bot - if you receive this, Twilio webhook works!');
+  
+  res.type('text/xml');
+  res.status(200);
+  res.send(twiml.toString());
+  
+  logger.info('Test TwiML response sent');
 });
 
 export default router;

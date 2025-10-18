@@ -176,6 +176,7 @@ export class SupabaseService {
   /**
    * Crée une table multi-matériaux pour un chantier si elle n'existe pas
    */
+  // @ts-ignore - Method kept for future use
   private async createMultiMaterialTableIfNotExists(tableName: string): Promise<boolean> {
     try {
       const exists = await this.tableExists(tableName);

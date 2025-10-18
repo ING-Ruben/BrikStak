@@ -50,7 +50,7 @@ export const EXTRACTION_SYSTEM_INSTRUCTIONS = `Tu es un système d'extraction de
    - "matin" → "08:00" (par défaut)
    - "après-midi" → "14:00" (par défaut)
 7. COMPLÉTUDE : Score de 0.0 à 1.0 basé sur les infos présentes
-8. CONFIRMATION : true si l'utilisateur confirme ("ok", "je confirme", "c'est bon", "validé")
+8. CONFIRMATION : true UNIQUEMENT si l'utilisateur confirme explicitement avec "ok", "je confirme", "c'est bon", "validé", "oui" ET que c'est en réponse à un récapitulatif de commande
 
 📏 CALCUL DE COMPLÉTUDE :
 - Chantier présent : +0.2
@@ -67,13 +67,24 @@ export const EXTRACTION_SYSTEM_INSTRUCTIONS = `Tu es un système d'extraction de
 - Unités : Liste fermée d'unités valides
 
 ❌ RÈGLES STRICTES :
-- Ne retourne QUE du JSON valide
+- Ne retourne QUE du JSON valide et COMPLET
 - Aucun texte explicatif
 - Aucun commentaire
+- TOUJOURS inclure TOUS les champs requis (chantier, materiaux, livraison, completude, confirmation)
 - Si aucune info → retourne structure vide avec completude: 0.0
 - Si erreur → retourne JSON d'erreur avec completude: 0.0
+- ASSURE-TOI que le JSON est COMPLET et bien formé avec toutes les accolades fermées
 
-IMPORTANT : Tu ne communiques jamais avec l'utilisateur. Tu analyses silencieusement et retournes uniquement des données JSON structurées.`;
+🔧 STRUCTURE OBLIGATOIRE COMPLÈTE :
+{
+  "chantier": "...",
+  "materiaux": [...],
+  "livraison": {"date": null, "heure": null},
+  "completude": 0.0,
+  "confirmation": false
+}
+
+IMPORTANT : Tu ne communiques jamais avec l'utilisateur. Tu analyses silencieusement et retournes uniquement des données JSON structurées COMPLÈTES.`;
 
 export interface MaterialInfo {
   nom: string;
@@ -121,7 +132,7 @@ export class ExtractionAgent {
       apiKey
     });
 
-    this.model = process.env['OPENAI_MODEL'] || 'gpt-4o-mini';
+    this.model = process.env['OPENAI_MODEL'] || 'gpt-5-mini';
     logger.info({ model: this.model }, 'ExtractionAgent initialized');
   }
 
@@ -216,7 +227,7 @@ export class ExtractionAgent {
     const lowerDate = dateStr.toLowerCase().trim();
     
     // Gérer les dates relatives
-    if (lowerDate === 'demain') {
+    if (lowerDate === 'demain' || lowerDate.includes('demain')) {
       const tomorrow = new Date(today);
       tomorrow.setDate(today.getDate() + 1);
       return this.formatDate(tomorrow);
@@ -228,17 +239,86 @@ export class ExtractionAgent {
       return this.formatDate(afterTomorrow);
     }
     
-    if (lowerDate === "aujourd'hui" || lowerDate === 'aujourd hui') {
+    if (lowerDate === "aujourd'hui" || lowerDate === 'aujourd hui' || lowerDate === 'maintenant') {
       return this.formatDate(today);
     }
     
-    // Gérer "dans X jours"
-    const daysMatch = lowerDate.match(/dans\s+(\d+)\s+jours?/);
-    if (daysMatch && daysMatch[1]) {
-      const days = parseInt(daysMatch[1]);
-      const futureDate = new Date(today);
-      futureDate.setDate(today.getDate() + days);
-      return this.formatDate(futureDate);
+    // Gérer "dans X jours" - plus flexible
+    const daysMatch = lowerDate.match(/dans\s+(\d+)\s+jours?/) || 
+                     lowerDate.match(/(\d+)\s+jours?/) ||
+                     lowerDate.match(/dans\s+(deux|trois|quatre|cinq)\s+jours?/);
+    
+    if (daysMatch) {
+      let days = 0;
+      if (daysMatch[1]) {
+        // Gérer les nombres
+        if (daysMatch[1] === 'deux') days = 2;
+        else if (daysMatch[1] === 'trois') days = 3;
+        else if (daysMatch[1] === 'quatre') days = 4;
+        else if (daysMatch[1] === 'cinq') days = 5;
+        else days = parseInt(daysMatch[1]);
+      }
+      
+      if (days > 0) {
+        const futureDate = new Date(today);
+        futureDate.setDate(today.getDate() + days);
+        const result = this.formatDate(futureDate);
+        logger.info({ 
+          originalText: dateStr, 
+          extractedDays: days, 
+          calculatedDate: result 
+        }, 'Converted relative date successfully');
+        return result;
+      }
+    }
+    
+    // Gérer les jours de la semaine
+    const weekDays = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+    for (let i = 0; i < weekDays.length; i++) {
+      if (lowerDate.includes(weekDays[i]!)) {
+        const targetDay = i;
+        const currentDay = today.getDay();
+        let daysUntilTarget = targetDay - currentDay;
+        
+        // Si c'est le même jour ou passé, prendre la semaine suivante
+        if (daysUntilTarget <= 0) {
+          daysUntilTarget += 7;
+        }
+        
+        const targetDate = new Date(today);
+        targetDate.setDate(today.getDate() + daysUntilTarget);
+        return this.formatDate(targetDate);
+      }
+    }
+    
+    // Essayer de parser des formats comme "28/10/2023" ou "28-10-2023"
+    const datePatterns = [
+      /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, // DD/MM/YYYY
+      /^(\d{1,2})-(\d{1,2})-(\d{4})$/,  // DD-MM-YYYY
+      /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/, // YYYY/MM/DD
+      /^(\d{4})-(\d{1,2})-(\d{1,2})$/   // YYYY-MM-DD
+    ];
+    
+    for (const pattern of datePatterns) {
+      const match = dateStr.match(pattern);
+      if (match) {
+        let day, month, year;
+        
+        if (pattern.source.startsWith('^\\(\\d{4}')) {
+          // Format YYYY/MM/DD ou YYYY-MM-DD
+          [, year, month, day] = match;
+        } else {
+          // Format DD/MM/YYYY ou DD-MM-YYYY
+          [, day, month, year] = match;
+        }
+        
+        const parsedDate = new Date(parseInt(year!), parseInt(month!) - 1, parseInt(day!));
+        if (parsedDate.getFullYear() == parseInt(year!) && 
+            parsedDate.getMonth() == parseInt(month!) - 1 && 
+            parsedDate.getDate() == parseInt(day!)) {
+          return this.formatDate(parsedDate);
+        }
+      }
     }
     
     return null;
@@ -346,10 +426,37 @@ export class ExtractionAgent {
           const convertedDate = this.convertToDateFormat(data.livraison.date);
           if (convertedDate && this.validateDate(convertedDate)) {
             result.livraison.date = convertedDate;
+            logger.info({ originalDate: data.livraison.date, convertedDate }, 'Date converted successfully');
           } else if (this.validateDate(data.livraison.date)) {
             result.livraison.date = data.livraison.date;
           } else {
-            errors.push(`Format de date invalide: ${data.livraison.date}`);
+            // Au lieu d'ajouter une erreur bloquante, on essaie un fallback intelligent
+            const today = new Date();
+            let fallbackDate = new Date(today);
+            
+            // Essayer de détecter "dans X jours" dans la date originale
+            const originalLower = data.livraison.date.toLowerCase();
+            const daysMatch = originalLower.match(/dans\s+(\d+)\s+jours?/) || 
+                             originalLower.match(/(\d+)\s+jours?/);
+            
+            if (daysMatch && daysMatch[1]) {
+              const days = parseInt(daysMatch[1]);
+              if (days > 0 && days <= 30) { // Sécurité : max 30 jours
+                fallbackDate.setDate(today.getDate() + days);
+              } else {
+                fallbackDate.setDate(today.getDate() + 1); // Default demain
+              }
+            } else {
+              fallbackDate.setDate(today.getDate() + 1); // Default demain
+            }
+            
+            const fallbackFormatted = this.formatDate(fallbackDate);
+            result.livraison.date = fallbackFormatted;
+            logger.warn({ 
+              originalDate: data.livraison.date, 
+              fallbackDate: fallbackFormatted,
+              detectedDays: daysMatch ? daysMatch[1] : 'none'
+            }, 'Date format invalid, using intelligent fallback');
           }
         }
 
@@ -412,6 +519,66 @@ export class ExtractionAgent {
   }
 
   /**
+   * Tente de réparer un JSON tronqué en ajoutant les parties manquantes
+   */
+  private attemptJsonRepair(truncatedJson: string): any | null {
+    try {
+      // Nettoyer les caractères de contrôle
+      let cleanedJson = truncatedJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      
+      // Si le JSON se termine au milieu d'un tableau de matériaux
+      if (cleanedJson.includes('"materiaux"') && !cleanedJson.includes('"livraison"')) {
+        // Compléter la structure manquante
+        if (!cleanedJson.endsWith(']')) {
+          cleanedJson += ']';
+        }
+        
+        cleanedJson += `,
+  "livraison": {
+    "date": null,
+    "heure": null
+  },
+  "completude": 0.5,
+  "confirmation": false
+}`;
+      }
+      
+      // Si le JSON se termine au milieu d'un objet matériau
+      else if (cleanedJson.includes('"materiaux"') && cleanedJson.match(/{\s*"nom":\s*"[^"]*",?\s*("quantite":\s*"[^"]*",?)?\s*("unite":\s*"[^"]*",?)?\s*$/)) {
+        // Fermer l'objet matériau en cours
+        if (!cleanedJson.endsWith('}')) {
+          cleanedJson += '}';
+        }
+        
+        cleanedJson += `],
+  "livraison": {
+    "date": null,
+    "heure": null
+  },
+  "completude": 0.5,
+  "confirmation": false
+}`;
+      }
+      
+      // Essayer de parser le JSON réparé
+      const parsed = JSON.parse(cleanedJson);
+      
+      // Vérifier que la structure est valide
+      if (parsed && typeof parsed === 'object' && 
+          parsed.hasOwnProperty('chantier') && 
+          parsed.hasOwnProperty('materiaux') && 
+          Array.isArray(parsed.materiaux)) {
+        return parsed;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.debug({ error: error instanceof Error ? error.message : 'Unknown error' }, 'JSON repair attempt failed');
+      return null;
+    }
+  }
+
+  /**
    * Analyse la conversation et extrait les données structurées
    */
   async analyze(
@@ -439,6 +606,14 @@ export class ExtractionAgent {
       const responseText = response.output_text.trim();
       const processingTime = Date.now() - startTime;
 
+      // Log détaillé de la réponse pour debugging
+      logger.info({
+        responseLength: responseText.length,
+        responsePreview: responseText.substring(0, 100),
+        responseSuffix: responseText.length > 100 ? responseText.substring(responseText.length - 50) : '',
+        hasControlChars: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(responseText)
+      }, 'Raw extraction response received');
+
       // Parser le JSON de réponse
       let parsedData: any;
       try {
@@ -446,21 +621,31 @@ export class ExtractionAgent {
       } catch (parseError) {
         logger.error({
           error: parseError instanceof Error ? parseError.message : 'JSON parse error',
-          responseText: responseText.substring(0, 200)
+          responseText: responseText,
+          responseLength: responseText.length,
+          hasControlChars: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(responseText),
+          charCodes: responseText.split('').map(c => c.charCodeAt(0)).slice(200, 220)
         }, 'Failed to parse extraction response as JSON');
 
-        return {
-          data: {
-            chantier: null,
-            materiaux: [],
-            livraison: { date: null, heure: null },
-            completude: 0.0,
-            confirmation: false
-          },
-          processingTime,
-          errors: ['Réponse de l\'agent d\'extraction invalide (JSON malformé)'],
-          isValid: false
-        };
+        // Tentative de réparation du JSON tronqué
+        const repairedJson = this.attemptJsonRepair(responseText);
+        if (repairedJson) {
+          logger.info({ repairedJson }, 'Successfully repaired truncated JSON');
+          parsedData = repairedJson;
+        } else {
+          return {
+            data: {
+              chantier: null,
+              materiaux: [],
+              livraison: { date: null, heure: null },
+              completude: 0.0,
+              confirmation: false
+            },
+            processingTime,
+            errors: ['Réponse de l\'agent d\'extraction invalide (JSON malformé)'],
+            isValid: false
+          };
+        }
       }
 
       // Valider et nettoyer les données

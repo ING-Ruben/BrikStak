@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import axios from 'axios';
-import FormData from 'form-data';
+// import FormData from 'form-data';
 import pino from 'pino';
-import { Readable } from 'stream';
+// import { Readable } from 'stream';
 
 const logger = pino({ name: 'transcription-service' });
 
@@ -107,13 +107,14 @@ export class TranscriptionService {
         fileExtension = 'm4a';
       }
 
-      // Créer un stream à partir du buffer
-      const audioStream = Readable.from(audioBuffer);
-      (audioStream as any).path = `audio.${fileExtension}`;
+      // Créer un File-like object pour OpenAI
+      const audioFile = new File([audioBuffer], `audio.${fileExtension}`, {
+        type: contentType
+      });
 
       // Appeler l'API Whisper
       const transcription = await this.client.audio.transcriptions.create({
-        file: audioStream,
+        file: audioFile,
         model: 'whisper-1',
         language: 'fr', // Forcer le français pour de meilleurs résultats
         response_format: 'text'
@@ -160,8 +161,7 @@ export class TranscriptionService {
       const result: TranscriptionResult = {
         text: transcribedText,
         processingTime,
-        audioFormat: contentType,
-        audioDuration: undefined // Pourrait être calculé si nécessaire
+        ...(contentType && { audioFormat: contentType })
       };
 
       logger.info({
